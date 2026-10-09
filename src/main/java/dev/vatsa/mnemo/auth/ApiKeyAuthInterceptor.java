@@ -1,19 +1,20 @@
+
 package dev.vatsa.mnemo.auth;
 
+import dev.vatsa.mnemo.error.UnauthorizedException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+
+import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
-/**
- * Guards {@code /v1/**}: the request must send {@code Authorization: Bearer <gateway key>}
- * for an active key. On success the {@link ApiKey} is stored as a request attribute, so
- * controllers can read it with {@code @RequestAttribute(API_KEY_ATTRIBUTE)}.
- */
 @Component
 public class ApiKeyAuthInterceptor implements HandlerInterceptor {
 
-    public static final String API_KEY_ATTRIBUTE = "mnemo.apiKey";
+    private static final String BEARER_PREFIX = "Bearer ";
+
+    public static final String API_KEY_ATTRIBUTE = "apiKey";
 
     private final ApiKeyService apiKeyService;
 
@@ -22,12 +23,36 @@ public class ApiKeyAuthInterceptor implements HandlerInterceptor {
     }
 
     @Override
-    public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
-        // TODO(you):
-        //  1. Read the Authorization header. Missing, or not "Bearer <token>" -> throw UnauthorizedException.
-        //  2. Look the token up with apiKeyService.findActive(...). Empty -> throw UnauthorizedException.
-        //  3. request.setAttribute(API_KEY_ATTRIBUTE, apiKey) and return true.
-        // AdminAuthInterceptor in this package shows the same pattern for the admin token.
-        throw new UnsupportedOperationException("TODO(you): implement ApiKeyAuthInterceptor.preHandle");
+    public boolean preHandle(
+            HttpServletRequest request,
+            HttpServletResponse response,
+            Object handler) {
+
+        String header = request.getHeader(HttpHeaders.AUTHORIZATION);
+
+        if (header == null || !header.startsWith(BEARER_PREFIX)) {
+            throw new UnauthorizedException(
+                    "Missing API key bearer token"
+            );
+        }
+
+        String rawKey = header
+                .substring(BEARER_PREFIX.length())
+                .strip();
+
+        if (rawKey.isEmpty()) {
+            throw new UnauthorizedException(
+                    "Empty API key"
+            );
+        }
+
+        ApiKey apiKey = apiKeyService.findActive(rawKey)
+                .orElseThrow(() -> new UnauthorizedException(
+                        "Invalid or revoked API key"
+                ));
+
+        request.setAttribute(API_KEY_ATTRIBUTE, apiKey);
+
+        return true;
     }
 }
