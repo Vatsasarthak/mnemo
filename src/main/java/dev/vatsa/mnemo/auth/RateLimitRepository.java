@@ -3,6 +3,7 @@ package dev.vatsa.mnemo.auth;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -38,7 +39,8 @@ public class RateLimitRepository {
                 RETURNING request_count
                 """)
                 .param("apiKeyId", apiKeyId)
-                .param("windowStart", windowStart)
+                // The Postgres driver cannot bind Instant; OffsetDateTime maps to TIMESTAMPTZ.
+                .param("windowStart", OffsetDateTime.ofInstant(windowStart, ZoneOffset.UTC))
                 .param("rpmLimit", rpmLimit)
                 .query(Integer.class)
                 .optional()
