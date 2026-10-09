@@ -10,9 +10,36 @@ per-key rate limiting, and model fallback.
 Prerequisites: JDK 21, Docker Desktop.
 
 ```powershell
-copy .env.example .env      # then fill in GEMINI_API_KEY and ADMIN_TOKEN
+copy .env.example .env      # then fill in GEMINI_API_KEY and ADMIN_TOKEN (32+ chars)
 docker compose up -d        # starts Redis 8 and PostgreSQL
-.\mvnw.cmd spring-boot:run  # available after milestone 1
+.\mvnw.cmd spring-boot:run  # starts the gateway on http://localhost:8080
 ```
+
+Run the tests (needs Docker running; they use a WireMock fake, never the real Gemini API):
+
+```powershell
+.\mvnw.cmd test
+```
+
+### Try it
+
+```powershell
+$admin = "<your ADMIN_TOKEN>"
+
+# 1. Create a client API key (shown once; only its SHA-256 hash is stored)
+$created = Invoke-RestMethod -Method Post http://localhost:8080/admin/keys `
+  -Headers @{ Authorization = "Bearer $admin" } -ContentType "application/json" `
+  -Body '{"name": "laundry-app"}'
+$key = $created.key
+
+# 2. Chat through the gateway
+Invoke-RestMethod -Method Post http://localhost:8080/v1/chat `
+  -Headers @{ Authorization = "Bearer $key" } -ContentType "application/json" `
+  -Body '{"system": "You are a support assistant for a laundry app.",
+          "messages": [{"role": "user", "content": "How long does dry cleaning take?"}],
+          "temperature": 0.2}'
+```
+
+A missing, unknown or revoked key returns `401`; a failed Gemini call returns `502`, a timeout `504`.
 
 See [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md) for the full design.
