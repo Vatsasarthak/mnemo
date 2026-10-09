@@ -1,0 +1,32 @@
+spring:
+  application:
+    name: mnemo
+  config:
+    # Loads KEY=value lines from .env in the working directory as properties.
+    # "optional:" means the app still starts when .env is missing (e.g. in CI).
+    import: optional:file:.env[.properties]
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:mnemo}
+    username: ${POSTGRES_USER:mnemo}
+    password: ${POSTGRES_PASSWORD:mnemo}
+  mvc:
+    problemdetails:
+      enabled: true
+
+mnemo:
+  admin-token: ${ADMIN_TOKEN:}
+  gemini:
+    base-url: https://generativelanguage.googleapis.com
+    api-key: ${GEMINI_API_KEY:}
+    primary-model: gemini-3.8-flash
+    connect-timeout: 5s
+    read-timeout: 15s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
