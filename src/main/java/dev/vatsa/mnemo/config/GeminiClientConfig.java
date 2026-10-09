@@ -18,7 +18,10 @@ class GeminiClientConfig {
         MnemoProperties.Gemini gemini = properties.gemini();
 
         // The JDK's built-in HttpClient; the read timeout bounds how long we wait for Gemini's answer.
+        // HTTP/1.1 because the default HTTP/2 tries an "h2c" upgrade on plain http:// URLs,
+        // which the WireMock fake rejects. One request per call gains nothing from HTTP/2 anyway.
         HttpClient httpClient = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(gemini.connectTimeout())
                 .build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
