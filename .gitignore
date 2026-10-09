@@ -1,0 +1,23 @@
+# Secrets
+.env
+
+# Build output
+target/
+build/
+.gradle/
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# OS and logs
+.DS_Store
+Thumbs.db
+*.log
+
+# Claude Code personal settings
+.claude/settings.local.json
