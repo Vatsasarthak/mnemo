@@ -25,6 +25,14 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
                 .body(problem);
     }
 
+    @ExceptionHandler(RateLimitExceededException.class)
+    ResponseEntity<ProblemDetail> handleRateLimit(RateLimitExceededException e) {
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS, e.getMessage());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(e.getRetryAfterSeconds()))
+                .body(problem);
+    }
+
     /** Upstream details stay in the logs; clients only learn that the model call failed. */
     @ExceptionHandler(GeminiException.class)
     ProblemDetail handleGemini(GeminiException e) {
