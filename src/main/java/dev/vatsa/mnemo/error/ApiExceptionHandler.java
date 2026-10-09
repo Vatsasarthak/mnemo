@@ -1,5 +1,6 @@
 package dev.vatsa.mnemo.error;
 
+import dev.vatsa.mnemo.gemini.GeminiException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
@@ -22,5 +23,13 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                 .header(HttpHeaders.WWW_AUTHENTICATE, "Bearer")
                 .body(problem);
+    }
+
+    /** Upstream details stay in the logs; clients only learn that the model call failed. */
+    @ExceptionHandler(GeminiException.class)
+    ProblemDetail handleGemini(GeminiException e) {
+        return e.isTimeout()
+                ? ProblemDetail.forStatusAndDetail(HttpStatus.GATEWAY_TIMEOUT, "The model did not answer in time")
+                : ProblemDetail.forStatusAndDetail(HttpStatus.BAD_GATEWAY, "The model call failed");
     }
 }
