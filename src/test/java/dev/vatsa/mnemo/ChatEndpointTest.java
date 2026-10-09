@@ -19,7 +19,15 @@ import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import com.jayway.jsonpath.JsonPath;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -242,16 +250,142 @@ class ChatEndpointTest {
         mvc.perform(chat(key, CHAT_BODY)).andExpect(status().isBadGateway());
     }
 
+    // --- rate limiting and token usage ---
+
+    @Test
+    void successfulRequestsRecordGeminisActualTokenUsage() throws Exception {
+        String key = createKey();
+        gemini.stubFor(WireMock.post(urlEqualTo(GENERATE_PATH)).willReturn(okJson(GEMINI_OK)));
+
+        mvc.perform(chat(key, CHAT_BODY)).andExpect(status().isOk());
+        mvc.perform(chat(key, CHAT_BODY)).andExpect(status().isOk());
+
+        // Each answer used 12 input + 13 output (8 answer + 5 thinking) tokens.
+        assertThat(tokensUsedToday(key)).isEqualTo(50);
+    }
+
+    @Test
+    void requestsOverTheRpmLimitGet429WithRetryAfter() throws Exception {
+        String key = createKey(2, 100_000);
+        gemini.stubFor(WireMock.post(urlEqualTo(GENERATE_PATH)).willReturn(okJson(GEMINI_OK)));
+        awaitRoomInCurrentMinute(5_000);
+
+        mvc.perform(chat(key, CHAT_BODY)).andExpect(status().isOk());
+        mvc.perform(chat(key, CHAT_BODY)).andExpect(status().isOk());
+        String retryAfter = mvc.perform(chat(key, CHAT_BODY))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.status").value(429))
+                .andExpect(jsonPath("$.detail").value("Requests-per-minute limit reached"))
+                .andReturn().getResponse().getHeader(HttpHeaders.RETRY_AFTER);
+
+        assertThat(Long.parseLong(retryAfter)).isBetween(1L, 60L);
+        gemini.verify(2, postRequestedFor(urlEqualTo(GENERATE_PATH)));
+    }
+
+    @Test
+    void concurrentRequestsNeverExceedTheRpmLimit() throws Exception {
+        int limit = 60;
+        int requests = 100;
+        String key = createKey(limit, 10_000_000);
+        gemini.stubFor(WireMock.post(urlEqualTo(GENERATE_PATH)).willReturn(okJson(GEMINI_OK)));
+        awaitRoomInCurrentMinute(15_000);
+
+        // All threads wait on the latch, then fire together to maximise contention on one window row.
+        CountDownLatch start = new CountDownLatch(1);
+        List<Future<Integer>> statuses = new ArrayList<>();
+        try (ExecutorService pool = Executors.newFixedThreadPool(32)) {
+            for (int i = 0; i < requests; i++) {
+                statuses.add(pool.submit(() -> {
+                    start.await();
+                    return mvc.perform(chat(key, CHAT_BODY)).andReturn().getResponse().getStatus();
+                }));
+            }
+            start.countDown();
+        }
+
+        Map<Integer, Long> byStatus = new HashMap<>();
+        for (Future<Integer> status : statuses) {
+            byStatus.merge(status.get(), 1L, Long::sum);
+        }
+        assertThat(byStatus).containsOnlyKeys(200, 429);
+        assertThat(byStatus.get(200)).isEqualTo(limit);
+        assertThat(byStatus.get(429)).isEqualTo(requests - limit);
+        gemini.verify(limit, postRequestedFor(urlEqualTo(GENERATE_PATH)));
+    }
+
+    @Test
+    void requestsAfterTheDailyTokenLimitGet429() throws Exception {
+        String key = createKey(60, 20);
+        gemini.stubFor(WireMock.post(urlEqualTo(GENERATE_PATH)).willReturn(okJson(GEMINI_OK)));
+
+        // 0 used < 20, so this is allowed; it costs 25 tokens. The limit is soft: a request's cost
+        // is only known after Gemini answers, so the last allowed request can overshoot.
+        mvc.perform(chat(key, CHAT_BODY)).andExpect(status().isOk());
+        assertThat(tokensUsedToday(key)).isEqualTo(25);
+
+        String retryAfter = mvc.perform(chat(key, CHAT_BODY))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.detail").value("Daily token limit reached"))
+                .andReturn().getResponse().getHeader(HttpHeaders.RETRY_AFTER);
+
+        assertThat(Long.parseLong(retryAfter)).isBetween(1L, 86_400L);
+        gemini.verify(1, postRequestedFor(urlEqualTo(GENERATE_PATH)));
+    }
+
+    @Test
+    void failedGeminiCallUsesAnRpmSlotButRecordsNoTokens() throws Exception {
+        String key = createKey(1, 100_000);
+        gemini.stubFor(WireMock.post(urlEqualTo(GENERATE_PATH)).willReturn(serverError()));
+        awaitRoomInCurrentMinute(5_000);
+
+        mvc.perform(chat(key, CHAT_BODY)).andExpect(status().isBadGateway());
+        mvc.perform(chat(key, CHAT_BODY)).andExpect(status().isTooManyRequests());
+
+        assertThat(tokensUsedToday(key)).isZero();
+        gemini.verify(1, postRequestedFor(urlEqualTo(GENERATE_PATH)));
+    }
+
     // --- helpers ---
 
     private String createKey() throws Exception {
+        return createKeyWithBody("{\"name\": \"test-app\"}");
+    }
+
+    private String createKey(int rpmLimit, long dailyTokenLimit) throws Exception {
+        return createKeyWithBody("{\"name\": \"test-app\", \"rpmLimit\": %d, \"dailyTokenLimit\": %d}"
+                .formatted(rpmLimit, dailyTokenLimit));
+    }
+
+    private String createKeyWithBody(String json) throws Exception {
         String body = mvc.perform(post("/admin/keys")
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + ADMIN_TOKEN)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"name\": \"test-app\"}"))
+                        .content(json))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         return JsonPath.read(body, "$.key");
+    }
+
+    private long tokensUsedToday(String key) throws Exception {
+        return jdbc.sql("""
+                        SELECT COALESCE(SUM(u.tokens_used), 0)
+                        FROM api_key_daily_usage u JOIN api_keys k ON k.id = u.api_key_id
+                        WHERE k.key_hash = :hash
+                        """)
+                .param("hash", sha256Hex(key))
+                .query(Long.class)
+                .single();
+    }
+
+    /**
+     * RPM windows are fixed UTC minutes. If the test could straddle a minute boundary, the window
+     * would reset mid-test and let extra requests through, so wait for the next minute instead.
+     */
+    private static void awaitRoomInCurrentMinute(long neededMillis) throws InterruptedException {
+        long intoMinute = System.currentTimeMillis() % 60_000;
+        if (intoMinute > 60_000 - neededMillis) {
+            Thread.sleep(60_000 - intoMinute + 100);
+        }
     }
 
     private static org.springframework.test.web.servlet.RequestBuilder chat(String key, String json) {
