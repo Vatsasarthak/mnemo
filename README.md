@@ -42,4 +42,18 @@ Invoke-RestMethod -Method Post http://localhost:8080/v1/chat `
 
 A missing, unknown or revoked key returns `401`; a failed Gemini call returns `502`, a timeout `504`.
 
+### Troubleshooting
+
+**`password authentication failed for user ...` at startup.** Something else may own port 5432. A native
+Windows PostgreSQL service listens on IPv4 `0.0.0.0:5432`, so `localhost` reaches it instead of the
+Docker container. Check with:
+
+```powershell
+Get-NetTCPConnection -LocalPort 5432 -State Listen | Select-Object LocalAddress, OwningProcess
+Get-Service postgresql*
+```
+
+Fix it by stopping that service (admin PowerShell: `Stop-Service postgresql-x64-18`) or by mapping the
+container to another port and setting `POSTGRES_PORT` in `.env` to match.
+
 See [docs/PROJECT_BRIEF.md](docs/PROJECT_BRIEF.md) for the full design.
