@@ -19,6 +19,17 @@ Current milestone: **1 — Skeleton and proxy** (code done; manual real-Gemini c
 
 Tick milestone 1 once the README "Try it" steps return a real Gemini answer.
 
+## Milestone 2 status (in progress, not complete)
+
+| Requirement | Status |
+| --- | --- |
+| Exact-match cache layer | Not started |
+| `X-Cache` header | Not started |
+| Repeated request returns `HIT-EXACT`, WireMock sees zero calls | Not started |
+| Rate limiting with a **Redis Lua token bucket** | Not done. An interim **PostgreSQL fixed-window** limiter is in place instead |
+| 100 parallel requests against a limit of 60 let exactly 60 through | Passes against the interim PostgreSQL limiter (`concurrentRequestsNeverExceedTheRpmLimit`); must be re-proven against Redis |
+| Daily token limit | Interim, soft limit (see README, Known limitations) |
+
 ## Measured numbers (fill in as you measure them)
 
 | Number | Value | Date measured |

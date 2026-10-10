@@ -41,6 +41,20 @@ Invoke-RestMethod -Method Post http://localhost:8080/v1/chat `
 ```
 
 A missing, unknown or revoked key returns `401`; a failed Gemini call returns `502`, a timeout `504`.
+Over a key's requests-per-minute or daily token limit returns `429` with a `Retry-After` header.
+
+### Rate limiting: known limitations (interim PostgreSQL version)
+
+Rate limits currently live in PostgreSQL. The brief's Redis Lua token bucket is not built yet.
+
+- **The daily token limit is soft.** Usage is checked before the Gemini call and the actual tokens are
+  added after it, so concurrent in-flight requests can push a key past its limit, by roughly
+  (requests in flight × tokens per request). Strict enforcement would need a reservation before the call.
+- **Requests per minute use fixed windows.** The limit is exact within each UTC minute, even under
+  concurrency, but a client can send up to 2× the limit across a minute boundary.
+- **No cleanup.** One `api_key_rate_windows` row is written per key per minute and never deleted.
+- **No `X-RateLimit-Remaining` header yet.**
+- Windows use each gateway instance's clock, so instances with clock skew disagree slightly.
 
 ### Troubleshooting
 
